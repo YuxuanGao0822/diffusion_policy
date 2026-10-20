@@ -109,3 +109,74 @@ checkpoint already generates one-step actions but may produce poor rollouts.
   not a proper conditional generation metric.
 - This implementation has not been benchmarked on the actual PushT Zarr
   dataset or GPU; such a run is required before claiming task performance.
+
+## Weights & Biases (W&B) experiment tracking
+
+This policy's Hydra config enables `logging.mode=online` by default. The
+`logging.project` is `priming_policy_pusht_lowdim`; all runs are grouped by
+`logging.group=priming_pusht_lowdim` and labeled via `logging.job_type`
+(`pretrain` or `posttrain`). Override these properties from the CLI.
+
+For initial setup on the **training server**, authenticate interactively:
+
+```bash
+conda activate robodiff
+wandb login --relogin
+unset WANDB_MODE WANDB_DISABLED WANDB_OFFLINE
+export CUDA_VISIBLE_DEVICES=7
+export SDL_VIDEODRIVER=dummy
+export SDL_AUDIODRIVER=dummy
+```
+
+Do **not** put W&B API keys in Hydra configs, training scripts, commit messages
+or version control. Revoke any W&B API key previously shared publicly and log
+in again with a newly generated key.
+
+Stage 1 (A100/A800 80 GB starting configuration):
+
+```bash
+python train.py --config-name=train_priming_lowdim_workspace \
+  training.stage=pretrain training.device=cuda:0 \
+  training.num_epochs=1500 training.resume=false \
+  training.learning_rate=1e-4 dataloader.batch_size=512 \
+  training.rollout_every=50 training.checkpoint_every=50 \
+  logging.mode=online \
+  hydra.run.dir=data/outputs/priming_pusht/stage1_wandb
+```
+
+Stage 2 (after Stage 1 completes, with a fresh output directory):
+
+```bash
+python train.py --config-name=train_priming_lowdim_workspace \
+  training.stage=posttrain training.device=cuda:0 \
+  training.init_checkpoint="$(pwd)/data/outputs/priming_pusht/stage1_wandb/checkpoints/latest.ckpt" \
+  training.init_weights=ema training.resume=false \
+  training.num_epochs=120 training.learning_rate=1e-5 \
+  dataloader.batch_size=64 val_dataloader.batch_size=32 \
+  policy.samples_per_condition=16 policy.ot_iterations=50 \
+  training.rollout_every=10 training.checkpoint_every=10 \
+  logging.mode=online \
+  hydra.run.dir=data/outputs/priming_pusht/stage2_wandb
+```
+
+With `CUDA_VISIBLE_DEVICES=7`, PyTorch sees physical GPU 7 as `cuda:0`.
+These batch sizes are initial proposals, not guaranteed to fit every GPU
+or task configuration. Reduce Stage-2 `dataloader.batch_size` if needed.
+
+Additional W&B/JSON scalar fields (alongside the existing `train_loss`,
+`val_loss`, `lr`, `test_mean_score`, etc.):
+
+| Stage | Every training minibatch | Validation mean per epoch |
+| --- | --- | --- |
+| Pretrain | `train/recon_mse` | `val/recon_mse` |
+| Posttrain | `train/ot_raw`, `train/ot_attraction`, `train/ot_repulsion`, `train/ot_total` | `val/ot_raw`, `val/ot_attraction`, `val/ot_repulsion`, `val/ot_total` |
+| Posttrain, `delta_weight>0` | `train/ot_delta` | `val/ot_delta` |
+
+The training metrics are logged per minibatch; validation component metrics
+are averaged across validation minibatches at the configured `val_every`
+interval. The existing `test_mean_score` is available only on epochs where
+`rollout_every` triggers. As the inherited Top-K checkpoint selector expects
+`test_mean_score`, keep `checkpoint_every` aligned with `rollout_every`
+(or smaller rollout interval that divides the checkpoint interval).
+
+These metrics are diagnostic and do not imply successful PushT training.
