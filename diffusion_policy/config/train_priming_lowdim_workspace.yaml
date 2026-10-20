@@ -1,0 +1,129 @@
+# PushT lowdim Priming Policy; assumes the existing PushT Zarr dataset.
+defaults:
+  - _self_
+  - task: pusht_lowdim
+
+name: train_priming_lowdim
+_target_: diffusion_policy.workspace.train_priming_lowdim_workspace.TrainPrimingLowdimWorkspace
+
+obs_dim: ${task.obs_dim}
+action_dim: ${task.action_dim}
+keypoint_dim: ${task.keypoint_dim}
+task_name: ${task.name}
+exp_name: "default"
+
+horizon: 16
+n_obs_steps: 2
+n_action_steps: 8
+n_latency_steps: 0
+past_action_visible: False
+keypoint_visible_rate: 1.0
+pred_action_steps_only: False  # expected by the inherited training workspace
+
+policy:
+  _target_: diffusion_policy.policy.priming_unet_lowdim_policy.PrimingUnetLowdimPolicy
+  model:
+    _target_: diffusion_policy.model.diffusion.conditional_unet1d.ConditionalUnet1D
+    input_dim: ${action_dim}
+    local_cond_dim: null
+    global_cond_dim: ${eval:'${obs_dim}*${n_obs_steps}'}
+    diffusion_step_embed_dim: 256
+    down_dims: [256, 512, 1024]
+    kernel_size: 5
+    n_groups: 8
+    cond_predict_scale: True
+  horizon: ${horizon}
+  obs_dim: ${obs_dim}
+  action_dim: ${action_dim}
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
+  stage: ${training.stage}
+  noise_level: 0.8
+  samples_per_condition: 4
+  ot_epsilon: 0.05
+  ot_iterations: 30
+  delta_weight: 0.0
+  clip_sample: True
+  oa_step_convention: True
+
+ema:
+  _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
+  update_after_step: 0
+  inv_gamma: 1.0
+  power: 0.75
+  min_value: 0.0
+  max_value: 0.9999
+
+dataloader:
+  batch_size: 256  # set to 8-16 for Stage 2, which samples K actions per condition
+  num_workers: 1
+  shuffle: True
+  pin_memory: True
+  persistent_workers: False
+
+val_dataloader:
+  batch_size: 256
+  num_workers: 1
+  shuffle: False
+  pin_memory: True
+  persistent_workers: False
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: ${training.learning_rate}
+  betas: [0.95, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
+
+training:
+  stage: pretrain
+  init_checkpoint: null  # mandatory for a fresh posttrain run
+  init_weights: ema       # 'ema' or 'online' from Stage 1
+  learning_rate: 1.0e-4   # suggest 1e-5 for Stage 2
+  device: "cuda:0"
+  seed: 42
+  debug: False
+  resume: True
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  num_epochs: 500
+  gradient_accumulate_every: 1
+  use_ema: True
+  rollout_every: 50
+  checkpoint_every: 50
+  val_every: 1
+  sample_every: 5
+  max_train_steps: null
+  max_val_steps: null
+  tqdm_interval_sec: 1.0
+
+logging:
+  project: priming_policy_pusht_lowdim
+  resume: False
+  mode: online
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${training.stage}_${task_name}
+  tags: ["${name}", "${training.stage}", "${task_name}", "${exp_name}"]
+  id: null
+  group: null
+
+checkpoint:
+  topk:
+    monitor_key: test_mean_score
+    mode: max
+    k: 5
+    format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt'
+  save_last_ckpt: True
+  save_last_snapshot: False
+
+multi_run:
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${training.stage}_${task_name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${training.stage}_${task_name}
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${training.stage}_${task_name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${training.stage}_${task_name}
+    subdir: ${hydra.job.num}
