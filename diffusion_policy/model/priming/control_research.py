@@ -218,6 +218,11 @@ def sample_noise(actor,b,device):
 
 @torch.no_grad()
 def evaluate(actor,teacher,modality,device,seeds,max_steps=300,gamma=0.99):
+    # Evaluation must NOT perturb the stream of training random numbers.
+    py_rng=random.getstate()
+    np_rng=np.random.get_state()
+    cpu_rng=torch.get_rng_state()
+    cuda_rng=torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
     env=PushTChunkEnv(modality,teacher.n_obs_steps,teacher.n_action_steps,
                       max_steps,gamma)
     rewards=[]
@@ -237,6 +242,11 @@ def evaluate(actor,teacher,modality,device,seeds,max_steps=300,gamma=0.99):
             rewards.append(best)
     finally:
         env.close()
+        random.setstate(py_rng)
+        np.random.set_state(np_rng)
+        torch.set_rng_state(cpu_rng)
+        if cuda_rng is not None:
+            torch.cuda.set_rng_state_all(cuda_rng)
     return {"mean_score":float(np.mean(rewards)),
             "per_seed":{str(s):float(r) for s,r in zip(seeds,rewards)}}
 
