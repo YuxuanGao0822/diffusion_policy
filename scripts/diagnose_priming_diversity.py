@@ -37,7 +37,14 @@ def score_samples(pred, real, start, steps):
     # Pair RMS over distinct noise samples, excluding i=j.
     pair_sq = (2*k/(k-1) * (pred-mean).square().sum((-1, -2)).mean()).item()
     expert_sq = err.square().sum((-1, -2)).mean().item()
+    pred_exec = pred[:,start:start+steps,:]
+    real_exec = real[start:start+steps,:]
+    exec_mean = pred_exec.mean(dim=0)
+    exec_err = pred_exec - real_exec.unsqueeze(0)
     return {
+        "noise_std_executed": (pred_exec-exec_mean).square().mean().sqrt().item(),
+        "sample_expert_mse_executed": exec_err.square().mean().item(),
+        "mean_expert_mse_executed": (exec_mean-real_exec).square().mean().item(),
         "noise_std": (pred-mean).square().mean().sqrt().item(),
         "pair_rms": pair_sq**0.5,
         "expert_rms": expert_sq**0.5,

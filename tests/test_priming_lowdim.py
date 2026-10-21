@@ -179,3 +179,44 @@ def test_invalid_distribution_objective():
     import pytest
     with pytest.raises(ValueError, match="objective"):
         ConditionalActionOTLoss(objective="not-an-objective")
+
+
+def test_executed_window_matches_inference_action_slice():
+    """Stage-2 executed-only OT must use exactly the policy's deployed steps."""
+    class RecordingLoss(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.shapes = None
+
+        def forward(self, live, reference, real):
+            self.shapes = (tuple(live.shape), tuple(reference.shape), tuple(real.shape))
+            loss = (live - real).square().mean()
+            return loss, {"ot_total": loss.detach()}
+
+    p = make_policy("posttrain")
+    recorder = RecordingLoss()
+    p.distribution_loss = recorder
+
+    # Existing Stage-2 behavior: all 16 predicted time steps.
+    loss_full = p.compute_loss(batch())
+    assert torch.isfinite(loss_full)
+    assert recorder.shapes == ((4, 3, 16, 2), (4, 3, 16, 2), (4, 1, 16, 2))
+
+    # New opt-in: only [n_obs_steps-1 : n_obs_steps-1+n_action_steps].
+    p.distribution_window = "executed"
+    loss_executed = p.compute_loss(batch())
+    assert torch.isfinite(loss_executed)
+    assert recorder.shapes == ((4, 3, 8, 2), (4, 3, 8, 2), (4, 1, 8, 2))
+    loss_executed.backward()
+    assert p.model.net[-1].weight.grad is not None
+    assert torch.isfinite(p.model.net[-1].weight.grad).all()
+
+
+def test_invalid_distribution_window_is_rejected():
+    import pytest
+    with pytest.raises(ValueError, match="distribution_window"):
+        PrimingUnetLowdimPolicy(
+            model=TinyConditionalGenerator(), horizon=16,
+            obs_dim=20, action_dim=2, n_obs_steps=2, n_action_steps=8,
+            distribution_window="invalid",
+        )
