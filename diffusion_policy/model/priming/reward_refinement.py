@@ -61,7 +61,7 @@ class Replay:
 
     def state_dict(self):
         return {"capacity": self.capacity, "index":self.index, "size":self.size,
-                "arrays":{k:v.copy() for k,v in self.arrays.items()}}
+                "arrays":{k:v[:self.size].copy() for k,v in self.arrays.items()}}
 
     @classmethod
     def from_state_dict(cls, payload):
@@ -70,7 +70,7 @@ class Replay:
                    ar["action"].shape[-1])
         self.index, self.size = payload["index"],payload["size"]
         for k in self.arrays:
-            self.arrays[k][:] = ar[k]
+            self.arrays[k][:self.size] = ar[k]
         return self
 
 

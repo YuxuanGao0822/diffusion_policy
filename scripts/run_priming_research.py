@@ -379,6 +379,21 @@ def run_phase(phase,modality,teacher,args,parent,previous=None):
     name={1:"residual_sac",2:"anchored_q_priming",3:"task_aware_ot"}[phase]
     run=Path(parent)/name
     run.mkdir(parents=True,exist_ok=True)
+    # Guard resumed experiments against silently changing the checkpoint
+    # initialization, optimizer parameters, seed, or training budget.
+    manifest=run/"run_config.json"
+    relevant={
+        "phase":phase,"modality":modality,"checkpoint":str(args.checkpoint)
+            if modality=="lowdim" else str(args.image_checkpoint or "image_stage1"),
+        "parameters":{k:v for k,v in vars(args).items()
+            if k not in ("phase","dry_run","output","image_checkpoint","smoke")},
+    }
+    if manifest.exists():
+        if json.loads(manifest.read_text()) != relevant:
+            raise RuntimeError("Run parameters changed for existing "+str(run)+
+                "; use a distinct --output directory for the new experiment.")
+    else:
+        manifest.write_text(json.dumps(relevant,indent=2,sort_keys=True))
     best_path=run/"best.pt"
     latest_path=run/"latest.pt"
     device=next(teacher.model.parameters()).device
@@ -520,21 +535,47 @@ def research_modality(modality,checkpoint,args):
         vals=[float(r["max_reward"]) for r in csv.DictReader(f)]
     print(f"BASELINE {modality} mean={np.mean(vals):.6f} n={len(vals)}")
     previous=None
+    run_names={1:"residual_sac",2:"anchored_q_priming",3:"task_aware_ot"}
     for phase in (1,2,3):
         previous=run_phase(phase,modality,teacher,args,root,previous)
-        if phase==3:
-            # Report completely withheld seeds, never used for checkpoint
-            # selection. Load BEST weights, but keep latest replay separately.
-            best=load_state(root/"task_aware_ot"/"best.pt",device)
-            policy=Controller(
-                teacher,modality,device,
-                residual=None,
-                generator=copy.deepcopy(teacher.model).to(device))
-            policy.generator.load_state_dict(best["generator"])
-            base_seed=500000 if modality=="lowdim" else 600000
-            seeds=[base_seed+i for i in range(args.final_eval_episodes)]
-            evaluate(policy,args,modality,"final_unseen",
-                     root/"final_unseen.csv",seeds=seeds)
+        # The NEXT stage gets the best predecessor POLICY parameters, and
+        # the latest critic/replay state. Do not accidentally propagate a
+        # late overtrained policy just because it is 'latest'.
+        best=load_state(root/run_names[phase]/"best.pt",device)
+        key="actor" if phase==1 else "generator"
+        previous[key]=best[key]
+    # Final seeds are kept out of all checkpoint selection and updates.
+    base_seed=500000 if modality=="lowdim" else 600000
+    seeds=[base_seed+i for i in range(args.final_eval_episodes)]
+    summary=[]
+    controllers=[("frozen_stage1",Controller(teacher,modality,device))]
+    for phase in (1,2,3):
+        name=run_names[phase]
+        best=load_state(root/name/"best.pt",device)
+        if phase==1:
+            sd=teacher.n_obs_steps*(teacher.obs_feature_dim if
+                hasattr(teacher,"obs_feature_dim") else teacher.obs_dim)
+            ad=teacher.n_action_steps*teacher.action_dim
+            residual=ResidualActor(sd,ad,args.residual_bound).to(device)
+            residual.load_state_dict(best["actor"])
+            residual.eval()
+            ctrl=Controller(teacher,modality,device,residual=residual)
+        else:
+            generator=copy.deepcopy(teacher.model).to(device)
+            generator.load_state_dict(best["generator"])
+            generator.eval()
+            ctrl=Controller(teacher,modality,device,generator=generator)
+        controllers.append((name,ctrl))
+    for name,ctrl in controllers:
+        score=evaluate(ctrl,args,modality,name+"_unseen",
+                       root/("final_"+name+".csv"),seeds=seeds)
+        summary.append({"policy":name,"heldout_score":score,
+                        "n_seeds":len(seeds)})
+    with (root/"final_comparison.csv").open("w",newline="") as f:
+        writer=csv.DictWriter(f,fieldnames=list(summary[0]))
+        writer.writeheader()
+        writer.writerows(summary)
+    print("FINAL HELD-OUT SUMMARY",modality,summary,flush=True)
     return previous
 
 
