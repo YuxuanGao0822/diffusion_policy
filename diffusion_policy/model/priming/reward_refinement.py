@@ -37,11 +37,14 @@ class Replay:
             action=np.empty((capacity,action_dim), np.float32),
             reward=np.empty((capacity,1), np.float32),
             discount=np.empty((capacity,1), np.float32),
-            terminal=np.empty((capacity,1), np.float32))
+            terminal=np.empty((capacity,1), np.float32),
+            episode_id=np.empty((capacity,1), np.int64))
 
-    def add(self, state, action, reward, next_state, discount, terminal):
+    def add(self, state, action, reward, next_state, discount, terminal,
+            episode_id=-1):
         i = self.index
-        data = (state,next_state,action,[reward],[discount],[float(terminal)])
+        data = (state,next_state,action,[reward],[discount],
+                [float(terminal)],[int(episode_id)])
         for key,value in zip(self.arrays, data):
             self.arrays[key][i] = np.asarray(value, np.float32)
         self.index = (i+1) % self.capacity

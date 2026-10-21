@@ -164,7 +164,7 @@ def episode(env,controller,seed,gamma,replay=None,explore=0.0,deterministic=True
             ns=controller.feature(next_obs)
             rew,discount=chunk_return(primitive,gamma)
             replay.add(s[0].cpu().numpy(),act[0].cpu().numpy(),
-                       rew,ns[0].cpu().numpy(),discount,done)
+                       rew,ns[0].cpu().numpy(),discount,done,episode_id=seed)
         obs=next_obs
         transitions+=1
     return float(best),transitions
@@ -348,9 +348,19 @@ def train_dynamics(dyn,opt,replay,args,device):
         raise RuntimeError("Not enough transitions to train task dynamics: "+
                            f"{n} < {required}. Collect more episodes.")
     rng=np.random.RandomState(args.seed+303)
-    ids=rng.permutation(n)
-    cutoff=max(1,int(0.8*n))
-    train_ids,valid_ids=ids[:cutoff],ids[cutoff:]
+    # Split by rollout initial seed: adjacent steps from an episode
+    # (and re-collected episodes from the same seed in later phases)
+    # must never appear on both sides of the validation split.
+    groups=replay.arrays["episode_id"][:n,0]
+    unique=np.unique(groups)
+    if len(unique)<2:
+        raise RuntimeError("Need >=2 distinct rollout seeds for dynamics validation")
+    rng.shuffle(unique)
+    heldout=unique[:max(1,int(round(0.2*len(unique))))]
+    valid_ids=np.flatnonzero(np.isin(groups,heldout))
+    train_ids=np.flatnonzero(~np.isin(groups,heldout))
+    if not len(valid_ids) or not len(train_ids):
+        raise RuntimeError("Invalid grouped dynamics train/validation split")
     def batch_ids(index):
         return {k:torch.as_tensor(v[index],device=device)
                 for k,v in replay.arrays.items()}
