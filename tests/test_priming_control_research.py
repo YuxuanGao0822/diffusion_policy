@@ -125,3 +125,55 @@ def test_chunk_reward_uses_each_step_and_correct_bootstrap_duration():
     assert done and k==3 and best==3.
     assert abs(r-(1+0.9*2+0.9**2*3))<1e-6
     assert wrapper.steps==3
+
+
+def test_frozen_teacher_baseline_matches_raw_generator_and_ignores_trainable():
+    teacher=TinyTeacher()
+    actor=Actor(teacher,"teacher").initialize(4)
+    cond=torch.randn(2,4)
+    noise=torch.randn(2,16,2)
+    actions,base=actor.actions(cond,noise)
+    expected=teacher._generate(noise,cond)[:,1:9].clamp(-1,1)
+    assert actor.trainable is None
+    assert torch.allclose(actions,expected)
+    assert torch.equal(actions,base)
+    assert not actions.requires_grad
+
+
+def test_eval_restores_training_rng_with_stub_env(monkeypatch):
+    import random
+    from diffusion_policy.model.priming import control_research as cr
+
+    class FakeEnv:
+        def __init__(self,*args,**kwargs):
+            pass
+        def reset(self,seed):
+            return np.zeros((2,2),dtype=np.float32)
+        def step(self,physical):
+            return np.zeros((2,2),dtype=np.float32),0.,True,1,0.4
+        def close(self):
+            pass
+
+    class TinyTestTeacher(TinyTeacher):
+        def __init__(self):
+            super().__init__()
+            class Normalizer:
+                def __getitem__(self,key):
+                    class Action:
+                        def unnormalize(self,x):
+                            return x
+                    return Action()
+            self.normalizer=Normalizer()
+
+    teacher=TinyTestTeacher()
+    actor=Actor(teacher,"teacher").initialize(4)
+    monkeypatch.setattr(cr,"PushTChunkEnv",FakeEnv)
+    monkeypatch.setattr(cr,"encode_observation",
+        lambda teacher,obs,device:torch.zeros(1,4))
+    random.seed(11); np.random.seed(11); torch.manual_seed(11)
+    before=(random.getstate(),np.random.get_state(),torch.get_rng_state())
+    report=cr.evaluate(actor,teacher,"lowdim","cpu",[12001,12002])
+    assert report["mean_score"]==0.4
+    assert random.getstate()==before[0]
+    assert np.array_equal(np.random.get_state()[1],before[1][1])
+    assert torch.equal(torch.get_rng_state(),before[2])
