@@ -13,6 +13,10 @@ import dill
 import hydra
 import numpy as np
 import torch
+from omegaconf import OmegaConf
+
+# Saved Hydra policy configs use an eval interpolation for model dimensions.
+OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 
 @torch.no_grad()
