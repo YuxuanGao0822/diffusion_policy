@@ -24,6 +24,7 @@ class PrimingUnetLowdimPolicy(BaseLowdimPolicy):
                  ot_epsilon: float = 0.05, ot_iterations: int = 30,
                  delta_weight: float = 0.0,
                  distribution_objective: str = "ot",
+                 distribution_window: str = "full",
                  clip_sample: bool = True,
                  oa_step_convention: bool = True):
         super().__init__()
@@ -33,6 +34,8 @@ class PrimingUnetLowdimPolicy(BaseLowdimPolicy):
             raise ValueError("noise_level must be between 0 and 1")
         if samples_per_condition < 2:
             raise ValueError("samples_per_condition must be >= 2")
+        if distribution_window not in ("full", "executed"):
+            raise ValueError("distribution_window must be 'full' or 'executed'")
         if n_obs_steps < 1 or n_action_steps < 1:
             raise ValueError("n_obs_steps and n_action_steps must be positive")
         start = n_obs_steps - 1 if oa_step_convention else n_obs_steps
@@ -48,6 +51,7 @@ class PrimingUnetLowdimPolicy(BaseLowdimPolicy):
         self.stage = stage
         self.noise_level = float(noise_level)
         self.samples_per_condition = int(samples_per_condition)
+        self.distribution_window = distribution_window
         self.clip_sample = bool(clip_sample)
         self.oa_step_convention = bool(oa_step_convention)
         self.distribution_loss = ConditionalActionOTLoss(
@@ -108,6 +112,15 @@ class PrimingUnetLowdimPolicy(BaseLowdimPolicy):
         live = self._generate(live_noise, repeated_cond).reshape(B, K, H, Da)
         with torch.no_grad():
             reference = self._generate(ref_noise, repeated_cond).reshape(B, K, H, Da)
+        # Only a subset of the prediction horizon reaches the robot during
+        # receding-horizon control. Keep full-horizon matching as the default
+        # for regression compatibility, but enable an executed-action ablation.
+        if self.distribution_window == "executed":
+            start = self.n_obs_steps - 1 if self.oa_step_convention else self.n_obs_steps
+            window = slice(start, start + self.n_action_steps)
+            live = live[:, :, window, :]
+            reference = reference[:, :, window, :]
+            action = action[:, window, :]
         loss, metrics = self.distribution_loss(live, reference, action.unsqueeze(1))
         self.last_loss_metrics = metrics
         return loss

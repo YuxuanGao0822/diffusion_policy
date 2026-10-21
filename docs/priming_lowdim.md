@@ -241,3 +241,30 @@ sensitivity, generated pair distance, sample/expert error, and fraction of
 normalized actions outside the inference clamp [-1,1]. This is not a
 benchmark rollout and does not prove causal reasons for score changes.
 It uses matched observation indices and Gaussian noise across checkpoints.
+
+
+### Ablation: train distribution loss only on deployed actions
+
+The default `policy.distribution_window=full` matches all 16 predicted
+actions (indices 0..15). However, in the current PushT lowdim configuration,
+receding-horizon inference executes only 8 actions (indices 1..8), because
+`n_obs_steps=2`, `n_action_steps=8`, and OA convention is enabled.
+
+For an isolated control-aware OT ablation, use:
+
+```bash
+policy.distribution_window=executed
+```
+
+This computes distributional alignment and self-interaction **only on the
+actions actually deployed** by `predict_action`; the U-Net still predicts the
+full sequence so the architecture and rollout interface are unchanged.
+This may improve task relevance, but also discards supervision on the
+unexecuted context/tail and is not established to improve scores.
+
+Compare from the same Stage-1 EMA checkpoint, same noise samples per
+condition, learning rate, seed and rollout schedule. Save into a **new**
+Hydra run directory. This switch is independent of
+`policy.distribution_objective=ot|energy`; keep `ot` fixed for this test.
+Use the updated checkpoint diversity audit's `*_executed` metrics to
+compare matched condition errors on the deployed action window.

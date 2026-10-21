@@ -41,6 +41,7 @@ policy:
   noise_level: 0.8
   samples_per_condition: 4
   distribution_objective: ot  # alternatives: energy; default remains OT
+  distribution_window: full  # alternatives: executed (the 8 deployed steps)
   ot_epsilon: 0.05
   ot_iterations: 30
   delta_weight: 0.0
