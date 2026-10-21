@@ -220,3 +220,101 @@ def test_invalid_distribution_window_is_rejected():
             obs_dim=20, action_dim=2, n_obs_steps=2, n_action_steps=8,
             distribution_window="invalid",
         )
+
+
+def test_fresh_pretrain_continuation_uses_source_ema_without_resuming_optimizer(tmp_path):
+    """MSE continuation starts from the *same* E350 EMA weights at epoch 0."""
+    import dill
+    from unittest.mock import patch
+    from omegaconf import OmegaConf
+    from diffusion_policy.workspace.train_priming_lowdim_workspace import (
+        TrainPrimingLowdimWorkspace,
+    )
+    from diffusion_policy.workspace.train_diffusion_unet_lowdim_workspace import (
+        TrainDiffusionUnetLowdimWorkspace,
+    )
+
+    class TinyPolicy(nn.Module):
+        def __init__(self, stage, value):
+            super().__init__()
+            self.stage = stage
+            self.weight = nn.Parameter(torch.tensor(float(value)))
+
+    ckpt = tmp_path / "stage1-e350.ckpt"
+    torch.save(
+        {"state_dicts": {
+            "ema_model": {"weight": torch.tensor(3.5)},
+            "model": {"weight": torch.tensor(1.5)},
+        }},
+        ckpt, pickle_module=dill
+    )
+
+    ws = object.__new__(TrainPrimingLowdimWorkspace)
+    ws._output_dir = str(tmp_path / "fresh_mse_run")
+    ws.cfg = OmegaConf.create({"training": {
+        "stage": "pretrain", "resume": False,
+        "init_checkpoint": str(ckpt), "init_weights": "ema"
+    }})
+    ws.model = TinyPolicy("pretrain", 0.0)
+    ws.ema_model = TinyPolicy("pretrain", -1.0)
+    ws.optimizer = object()  # external ckpt must NOT overwrite optimizer
+    ws.epoch = 0
+    ws.global_step = 0
+    old_optimizer = ws.optimizer
+
+    with patch.object(TrainDiffusionUnetLowdimWorkspace, "run",
+                      return_value="runner_invoked") as inherited:
+        result = ws.run()
+    inherited.assert_called_once_with()
+    assert result == "runner_invoked"
+    assert ws.model.weight.item() == 3.5
+    assert ws.ema_model.weight.item() == 3.5
+    assert ws.optimizer is old_optimizer
+    assert ws.global_step == 0
+    assert ws.epoch == 0
+
+
+def test_fresh_pretrain_without_init_preserves_original_behavior(tmp_path):
+    from unittest.mock import patch
+    from omegaconf import OmegaConf
+    from diffusion_policy.workspace.train_priming_lowdim_workspace import (
+        TrainPrimingLowdimWorkspace,
+    )
+    from diffusion_policy.workspace.train_diffusion_unet_lowdim_workspace import (
+        TrainDiffusionUnetLowdimWorkspace,
+    )
+
+    ws = object.__new__(TrainPrimingLowdimWorkspace)
+    ws._output_dir = str(tmp_path)
+    ws.cfg = OmegaConf.create({"training": {
+        "stage": "pretrain", "resume": False, "init_checkpoint": None,
+        "init_weights": "ema",
+    }})
+    ws.model = make_policy("pretrain")
+    ws.ema_model = None
+    before = {k: v.detach().clone() for k, v in ws.model.state_dict().items()}
+    with patch.object(TrainDiffusionUnetLowdimWorkspace, "run",
+                      return_value=None) as inherited:
+        ws.run()
+    inherited.assert_called_once_with()
+    for key, value in before.items():
+        assert torch.equal(ws.model.state_dict()[key], value)
+
+
+def test_posttrain_still_requires_init_checkpoint(tmp_path):
+    import pytest
+    from omegaconf import OmegaConf
+    from diffusion_policy.workspace.train_priming_lowdim_workspace import (
+        TrainPrimingLowdimWorkspace,
+    )
+
+    ws = object.__new__(TrainPrimingLowdimWorkspace)
+    ws._output_dir = str(tmp_path)
+    ws.cfg = OmegaConf.create({"training": {
+        "stage": "posttrain", "resume": False,
+        "init_checkpoint": None, "init_weights": "ema",
+    }})
+    ws.model = make_policy("posttrain")
+    ws.ema_model = None
+    with pytest.raises(ValueError, match="posttrain requires"):
+        ws.run()

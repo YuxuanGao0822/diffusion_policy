@@ -268,3 +268,47 @@ Hydra run directory. This switch is independent of
 `policy.distribution_objective=ot|energy`; keep `ot` fixed for this test.
 Use the updated checkpoint diversity audit's `*_executed` metrics to
 compare matched condition errors on the deployed action window.
+
+
+## Controlled negative baseline: continued Stage-1 MSE training
+
+The original Stage-1 reconstruction objective can now be continued from a
+trusted Stage-1 EMA checkpoint with a **fresh optimizer and LR scheduler**.
+This is NOT `training.resume=true`: `epoch=0` means the first NEW training
+epoch after initialization. It intentionally reloads ONLY policy weights,
+initializing both online and EMA policies from the same source.
+
+To compare fairly with OT post-training, use the **same** checkpoint, seed,
+batch size, learning-rate budget and rollout schedule (the MSE control does
+not need `samples_per_condition=32`, since reconstruction samples one noisy
+action per batch element). The baseline retains the original Stage-1
+`policy.noise_level=0.8`.
+
+```bash
+cd ~/diffusion_policy
+CKPT="$(realpath data/outputs/priming_pusht/stage1_local/checkpoints/epoch=0350-test_mean_score=0.791.ckpt)"
+export CUDA_VISIBLE_DEVICES=7 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+python train.py --config-name=train_priming_lowdim_workspace \
+  training.stage=pretrain training.device=cuda:0 \
+  "training.init_checkpoint='$CKPT'" training.init_weights=ema \
+  training.resume=false training.debug=false training.seed=42 \
+  training.num_epochs=200 training.learning_rate=1e-5 \
+  training.lr_warmup_steps=300 \
+  dataloader.batch_size=128 dataloader.num_workers=8 \
+  dataloader.persistent_workers=true \
+  val_dataloader.batch_size=128 val_dataloader.num_workers=4 \
+  policy.noise_level=0.8 \
+  training.rollout_every=10 training.checkpoint_every=10 \
+  training.val_every=10 training.sample_every=10 \
+  task.env_runner.n_train_vis=0 task.env_runner.n_test_vis=0 \
+  logging.mode=disabled \
+  hydra.run.dir=data/outputs/priming_pusht/mse_continue_e350_b128
+```
+
+Compare `test/mean_score` across matching epochs and final checkpoints.
+Absolute `train_loss` values are **not comparable** across MSE and OT
+objectives. A roll-out gap alone does not establish its statistical significance;
+replicate selected experiments across seeds.
+
+The initial checkpoint path can contain `=`; for Hydra CLI overrides
+preserve quotes as shown (`"training.init_checkpoint='$CKPT'"`).

@@ -79,7 +79,7 @@ optimizer:
 
 training:
   stage: pretrain
-  init_checkpoint: null  # mandatory for a fresh posttrain run
+  init_checkpoint: null  # required for fresh posttrain; opt-in for continued pretrain
   init_weights: ema       # 'ema' or 'online' from Stage 1
   learning_rate: 1.0e-4   # suggest 1e-5 for Stage 2
   device: "cuda:0"
