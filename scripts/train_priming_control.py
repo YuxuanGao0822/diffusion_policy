@@ -194,7 +194,8 @@ def main():
     # Condition dim for image is obs_encoder feature dim * history length;
     # for lowdim it is n_obs_steps * obs_dim.
     cond_dim=teacher.n_obs_steps*teacher.obs_dim
-    actor=Actor(teacher,args.phase,residual_scale=args.residual_scale).initialize(cond_dim).to(device)
+    actor_phase="teacher" if args.phase=="baseline" else args.phase
+    actor=Actor(teacher,actor_phase,residual_scale=args.residual_scale).initialize(cond_dim).to(device)
     eval_seeds=list(range(220000,220000+args.eval_episodes))
     report_seeds=list(range(320000,320000+args.report_episodes))
 
