@@ -318,3 +318,30 @@ def test_posttrain_still_requires_init_checkpoint(tmp_path):
     ws.ema_model = None
     with pytest.raises(ValueError, match="posttrain requires"):
         ws.run()
+
+
+def test_gradient_diagnostic_matches_training_loss_without_parameter_update():
+    """Gradient decomposition must reproduce production OT (stopgrad scale/plan)."""
+    from scripts.diagnose_priming_ot_gradients import (
+        differentiable_ot_components, gradient_alignment_metrics,
+    )
+    torch.manual_seed(31)
+    param = nn.Parameter(torch.randn(2, 4, 8, 2))
+    real = torch.randn(2, 1, 8, 2)
+    reference = torch.randn(2, 4, 8, 2)
+    objective = ConditionalActionOTLoss(epsilon=0.05, sinkhorn_iterations=50)
+    original, metrics = objective(param, reference, real)
+    attraction, repulsion = differentiable_ot_components(
+        param, reference, real, 0.05, 50,
+    )
+    assert torch.allclose(attraction.detach(), metrics["ot_attraction"], atol=1e-6)
+    assert torch.allclose(repulsion.detach(), metrics["ot_repulsion"], atol=1e-6)
+    assert torch.allclose((attraction-repulsion).detach(), original.detach(), atol=1e-6)
+    mse = (param - real).square().mean()
+    stats = gradient_alignment_metrics(attraction, repulsion, mse, [param])
+    assert stats["grad_attraction_norm"] > 0
+    assert stats["grad_repulsion_norm"] > 0
+    assert stats["grad_ot_norm"] > 0
+    assert -1.00001 <= stats["attraction_vs_repulsive_cos"] <= 1.00001
+    assert -1.00001 <= stats["ot_vs_mse_cos"] <= 1.00001
+    assert param.grad is None  # autograd.grad must not accumulate parameter grads

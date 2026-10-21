@@ -312,3 +312,48 @@ replicate selected experiments across seeds.
 
 The initial checkpoint path can contain `=`; for Hydra CLI overrides
 preserve quotes as shown (`"training.init_checkpoint='$CKPT'"`).
+
+
+## OT gradient-alignment diagnostic (no training)
+
+Compare E350 EMA and a Stage-2 EMA checkpoint at the **same randomly
+selected train/validation conditions and the same Gaussian noise seeds**.
+This script does NOT update any weights. It decomposes the production
+quadratic OT cost into differentiable attraction and repulsion using the
+exact detached pair-RMS scale and detached Sinkhorn transport plan.
+
+```bash
+cd ~/diffusion_policy
+export CUDA_VISIBLE_DEVICES=7
+STAGE1_CKPT="$(realpath data/outputs/priming_pusht/stage1_local/checkpoints/epoch=0350-test_mean_score=0.791.ckpt)"
+STAGE2_CKPT="$(realpath data/outputs/priming_pusht/stage2_from_e350_b128_k32/checkpoints/latest.ckpt)"
+python scripts/diagnose_priming_ot_gradients.py \
+  --checkpoint "$STAGE1_CKPT" "$STAGE2_CKPT" \
+  --names stage1_e350 stage2_full_ot \
+  --device cuda:0 --conditions 16 --batch-size 2 --samples 8 \
+  --epsilon 0.05 --iterations 50 --window full \
+  --output data/outputs/priming_pusht/ot_gradient_audit.csv
+```
+
+Interpreting columns:
+- `grad_attraction_norm`: magnitude of the attractive parameter gradient.
+- `grad_repulsion_norm`: magnitude of the derivative of repulsion R,
+  whose contribution to total OT loss A-R is **negative**.
+- `repulsion_to_attraction_grad_norm`: ||dR/dtheta|| / ||dA/dtheta||;
+  a small value supports the hypothesis of weak repulsive gradients.
+- `attraction_vs_repulsive_cos`: cosine between dA/dtheta and
+  -dR/dtheta (the two contributions to the loss gradient).
+- `ot_vs_mse_cos`: cosine between d(A-R)/dtheta and the gradient of
+  Stage-1 *noisy reconstruction* MSE; negative values are conflicting
+  instantaneous training objectives, not proof of decreased reward.
+- `reconstruction_mse`: an additional Stage-1 objective diagnostic.
+
+This audits gradients **at the EMA checkpoint** rather than historical
+online-training gradients. These are local parameter-space diagnostics,
+not reward gradients, causal explanations, or a replacement for PushT
+rollouts. Energy Distance and nonzero delta_weight are not included.
+Use `--window executed` for a separate executed-window OT diagnostic;
+do not compare magnitudes across different normalization windows as if
+they were the same loss. For the full 65M-parameter U-Net, start with
+`--batch-size 2 --samples 8`; scaling K and batch is not necessary to
+test gradient direction.
