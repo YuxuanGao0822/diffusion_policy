@@ -24,6 +24,7 @@ from diffusion_policy.model.priming.control_research import (
     Dynamics,Replay,sample_noise,evaluate,soft_update,task_ot_features,
 )
 from diffusion_policy.model.priming.distribution_loss import ConditionalActionOTLoss
+from diffusion_policy.common.pytorch_util import optimizer_to
 
 
 def read_state(path,device):
@@ -88,6 +89,9 @@ def train_update(actor,critic,target_critic,target_actor,replay,optim_actor,
 
     for param in critic.parameters():
         param.requires_grad_(False)
+    if dynamics is not None:
+        # Preserve d(feature)/d(action) but never modify dynamics via actor OT.
+        dynamics.requires_grad_(False)
     nz=sample_noise(actor,len(s),device)
     predicted,teacher_actions=actor.actions(s,nz)
     v1,v2=critic(s,predicted)
@@ -124,6 +128,8 @@ def train_update(actor,critic,target_critic,target_actor,replay,optim_actor,
     optim_actor.step()
     for param in critic.parameters():
         param.requires_grad_(True)
+    if dynamics is not None:
+        dynamics.requires_grad_(True)
     soft_update(critic,target_critic,args.tau)
     soft_update(actor.trainable,target_actor,args.tau)
     return {"q_loss":float(loss_critic.detach()),"actor_q":float(actor_q.detach()),
@@ -247,9 +253,12 @@ def main():
         replay.transitions.extend(state["replay"])
         optim_actor.load_state_dict(state["optim_actor"])
         optim_critic.load_state_dict(state["optim_critic"])
+        optimizer_to(optim_actor,device)
+        optimizer_to(optim_critic,device)
         if dynamics is not None:
             dynamics.load_state_dict(state["dynamics"])
             optim_dynamics.load_state_dict(state["optim_dynamics"])
+            optimizer_to(optim_dynamics,device)
         seen,episodes,best_score=state["seen"],state["episodes"],state["best_score"]
         if "torch_rng" in state:
             torch.set_rng_state(state["torch_rng"])
