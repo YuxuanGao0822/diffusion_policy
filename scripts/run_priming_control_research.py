@@ -11,6 +11,7 @@ Use --smoke to verify wiring before hours-long GPU work. Every stage
 writes its own logs/checkpoints; --resume skips completed stages.
 """
 import argparse
+import csv
 import json
 import os
 import pathlib
@@ -194,7 +195,39 @@ def main():
                 "finished_at":time.time()},indent=2))
         record("image/stage1_teacher",{"path":str(image)})
     run_modality("image",image)
+    report=json.loads(manifest.read_text())
+    summary=[]
+    for modality in ("lowdim","image"):
+        base=report[modality+"/baseline"]["mean_score"]
+        for phase in ("baseline","residual","q","task_ot"):
+            result=report[modality+"/"+phase]
+            mean=(result["mean_score"] if phase=="baseline"
+                  else result["heldout_mean"])
+            summary.append({"modality":modality,"phase":phase,
+                "heldout_mean_score":mean,
+                "delta_from_frozen_teacher":mean-base,
+                "selection_mean":(result["mean_score"] if phase=="baseline"
+                     else result["best_selection_mean"])})
+    with (out/"summary.csv").open("w",newline="") as f:
+        writer=csv.DictWriter(f,fieldnames=list(summary[0]))
+        writer.writeheader()
+        writer.writerows(summary)
+    markdown=[
+        "# Priming Control: Held-out Results",
+        "",
+        "These are empirical scores, not statistical significance tests.",
+        "Selection seeds 220000+, held-out seeds 320000+.",
+        "",
+        "| Modality | Stage | Held-out score | Delta vs frozen |",
+        "|---|---|---:|---:|"]
+    for row in summary:
+        markdown.append(
+            "| "+row["modality"]+" | "+row["phase"]+" | "+
+            format(row["heldout_mean_score"],".5f")+" | "+
+            format(row["delta_from_frozen_teacher"],"+.5f")+" |")
+    (out/"summary.md").write_text("\n".join(markdown)+"\n")
     print("ALL PHASES COMPLETE:",manifest,flush=True)
+    print("Research summary:",out/"summary.md",flush=True)
 
 
 if __name__=="__main__":
