@@ -69,7 +69,7 @@ An episode's evaluation score is the **maximum PushT step reward**, matching the
 - data/outputs/priming_research/lowdim/final_comparison.csv
 - data/outputs/priming_research/image/final_comparison.csv
 
-Per-phase subdirectories contain best.pt, latest.pt, train.jsonl, an immutable run_config.json and individual evaluation CSVs. The next phase reuses **best policy weights**, latest previous critic and complete replay. A partial phase resumes automatically from latest.pt; incompatible parameter changes require a new --output directory.
+Per-phase subdirectories contain best.pt, latest.pt, train.jsonl, an immutable run_config.json and individual evaluation CSVs. The next phase reuses **best policy weights**, latest previous critic and complete replay. A partial online RL phase resumes automatically from latest.pt; incompatible parameter changes require a new --output directory. Interrupted Image Stage-1 pretraining is detected and deliberately refuses silent reuse of a partial checkpoint: resume that workspace deliberately or start with a new --output, or explicitly supply --image-checkpoint.
 
 ## Limitations and rigorous evaluation
 

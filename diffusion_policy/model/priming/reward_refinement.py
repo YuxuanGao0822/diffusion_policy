@@ -78,6 +78,10 @@ class ResidualActor(nn.Module):
     def __init__(self, state_dim, action_dim, bound=0.1):
         super().__init__()
         self.net = mlp(state_dim+action_dim, 2*action_dim)
+        # The first deterministic residual policy must reproduce its
+        # frozen teacher exactly; exploration noise is still stochastic.
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
         self.action_dim = action_dim
         self.bound = float(bound)
 

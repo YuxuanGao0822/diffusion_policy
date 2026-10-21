@@ -159,3 +159,11 @@ def test_data_collector_does_not_use_wrapper_max_as_training_reward():
     assert replay.arrays["reward"][0,0]==pytest.approx(.1+.9*.4)
     assert replay.arrays["discount"][0,0]==pytest.approx(.9**2)
     assert replay.arrays["terminal"][:2,0].tolist()==[0.,1.]
+
+
+def test_residual_initial_deterministic_policy_matches_teacher():
+    actor=ResidualActor(5,4,bound=.1)
+    state=torch.randn(3,5)
+    base=torch.randn(3,4).clamp(-.8,.8)
+    result=actor.act(state,base,deterministic=True)
+    assert torch.equal(result,base)

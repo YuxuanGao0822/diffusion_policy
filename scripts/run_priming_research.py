@@ -502,9 +502,18 @@ def run_image_pretraining(args):
         return str(path)
     out=Path(args.output)/"image_stage1"
     out.mkdir(parents=True,exist_ok=True)
-    if (out/"checkpoints").exists() and list((out/"checkpoints").glob("*.ckpt")):
-        print("Using existing image Stage-1 checkpoint; remove output to retrain.")
+    complete_marker=out/"image_pretrain_complete.json"
+    if complete_marker.is_file():
+        meta=json.loads(complete_marker.read_text())
+        if meta.get("epochs") != (2 if args.smoke else args.image_epochs):
+            raise RuntimeError("Image Stage-1 pretrain budget differs; use new --output")
         return choose_image_checkpoint(out)
+    if (out/"checkpoints").exists() and list((out/"checkpoints").glob("*.ckpt")):
+        raise RuntimeError(
+            "Interrupted image Stage-1 pretraining found in "+str(out)+
+            ". Cannot silently treat a partial image model as fully trained. "+
+            "Resume the original image workspace manually or start with a "+
+            "different --output; --image-checkpoint explicitly selects a snapshot.")
     if not Path("data/pusht/pusht_cchi_v7_replay.zarr").exists():
         raise FileNotFoundError("Missing data/pusht/pusht_cchi_v7_replay.zarr")
     cmd=[
@@ -521,7 +530,12 @@ def run_image_pretraining(args):
     ]
     print("Starting independent image Priming Stage-1:", " ".join(cmd),flush=True)
     subprocess.run(cmd,check=True)
-    return choose_image_checkpoint(out)
+    result=choose_image_checkpoint(out)
+    complete_marker.write_text(json.dumps({
+        "epochs":2 if args.smoke else args.image_epochs,
+        "checkpoint":result,"timestamp":time.time(),
+    },indent=2))
+    return result
 
 
 def research_modality(modality,checkpoint,args):
