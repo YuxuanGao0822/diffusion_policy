@@ -8,6 +8,13 @@ import argparse
 import csv
 import gc
 from pathlib import Path
+import sys
+
+# Direct execution (python scripts/...) puts scripts/ on sys.path, not repo root.
+# Add repo root so Hydra can resolve diffusion_policy.* checkpoint targets.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import dill
 import hydra
