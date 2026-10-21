@@ -220,3 +220,24 @@ settings to isolate the choice of objective. Use PushT rollout score as the
 primary outcome; energy loss values and OT loss values are on different scales
 and are not directly comparable. This option is exploratory, **not** a
 validated improvement. Consider 3 independent seeds for a final comparison.
+
+### Checkpoint diversity audit on your server
+
+Before running another lengthy post-training experiment, inspect the SAME
+training and validation observations under Stage-1 and Stage-2 EMA weights:
+
+```bash
+python scripts/diagnose_priming_diversity.py \
+  --checkpoint "$STAGE1_CKPT" "$STAGE2_CKPT" \
+  --names stage1_e350 stage2_latest \
+  --conditions 24 --samples 64 --noise-batch 32 \
+  --device cuda:0 \
+  --output data/outputs/priming_pusht/diversity_audit.csv
+```
+
+Use actual absolute checkpoint paths for STAGE1_CKPT and STAGE2_CKPT.
+The audit produces per-condition rows for both train and val with noise
+sensitivity, generated pair distance, sample/expert error, and fraction of
+normalized actions outside the inference clamp [-1,1]. This is not a
+benchmark rollout and does not prove causal reasons for score changes.
+It uses matched observation indices and Gaussian noise across checkpoints.
