@@ -60,6 +60,27 @@ class TrainDiffusionUnetLowdimWorkspace(BaseWorkspace):
         self.global_step = 0
         self.epoch = 0
 
+    @staticmethod
+    def _policy_loss_metrics(policy, prefix):
+        """Export optional scalar loss components to W&B / JSON logs.
+
+        Diffusion policies without `last_loss_metrics` are unaffected.
+        Detach tensors so logging never retains the autograd graph.
+        """
+        components = getattr(policy, 'last_loss_metrics', None)
+        if not isinstance(components, dict):
+            return {}
+        result = {}
+        for name, value in components.items():
+            if torch.is_tensor(value):
+                if value.numel() != 1:
+                    continue
+                value = value.detach().item()
+            elif not isinstance(value, (int, float, np.number)):
+                continue
+            result[f'{prefix}/{name}'] = float(value)
+        return result
+
     def run(self):
         cfg = copy.deepcopy(self.cfg)
 
@@ -189,6 +210,8 @@ class TrainDiffusionUnetLowdimWorkspace(BaseWorkspace):
                             'epoch': self.epoch,
                             'lr': lr_scheduler.get_last_lr()[0]
                         }
+                        step_log.update(self._policy_loss_metrics(
+                            self.model, prefix='train'))
 
                         is_last_batch = (batch_idx == (len(train_dataloader)-1))
                         if not is_last_batch:
@@ -222,12 +245,16 @@ class TrainDiffusionUnetLowdimWorkspace(BaseWorkspace):
                 if (self.epoch % cfg.training.val_every) == 0:
                     with torch.no_grad():
                         val_losses = list()
+                        val_component_values = {}
                         with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}", 
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
                                 loss = self.model.compute_loss(batch)
                                 val_losses.append(loss)
+                                for name, value in self._policy_loss_metrics(
+                                        self.model, prefix='val').items():
+                                    val_component_values.setdefault(name, []).append(value)
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
                                     break
@@ -235,6 +262,8 @@ class TrainDiffusionUnetLowdimWorkspace(BaseWorkspace):
                             val_loss = torch.mean(torch.tensor(val_losses)).item()
                             # log epoch average validation loss
                             step_log['val_loss'] = val_loss
+                            for name, values in val_component_values.items():
+                                step_log[name] = float(np.mean(values))
 
                 # run diffusion sampling on a training batch
                 if (self.epoch % cfg.training.sample_every) == 0:

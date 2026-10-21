@@ -101,3 +101,45 @@ def test_posttrain_backprop_and_reference_no_grad():
     assert p.model.net[-1].weight.grad is not None
     assert torch.isfinite(p.model.net[-1].weight.grad).all()
     assert 'ot_total' in p.last_loss_metrics
+
+def test_optional_loss_metrics_are_scalar_and_detached():
+    """Shared workspace exports Priming metrics without changing baseline training."""
+    from types import SimpleNamespace
+    from diffusion_policy.workspace.train_diffusion_unet_lowdim_workspace import (
+        TrainDiffusionUnetLowdimWorkspace,
+    )
+
+    metric_tensor = torch.tensor(1.25, requires_grad=True)
+    policy = SimpleNamespace(last_loss_metrics={
+        'recon_mse': metric_tensor,
+        'ot_repulsion': 0.375,
+        'non_scalar': torch.ones(3),
+    })
+    extracted = TrainDiffusionUnetLowdimWorkspace._policy_loss_metrics(
+        policy, prefix='train')
+    assert extracted == {
+        'train/recon_mse': 1.25,
+        'train/ot_repulsion': 0.375,
+    }
+    assert metric_tensor.grad is None
+    assert TrainDiffusionUnetLowdimWorkspace._policy_loss_metrics(
+        SimpleNamespace(), prefix='val') == {}
+
+
+def test_priming_stage_metrics_available_for_workspace():
+    from diffusion_policy.workspace.train_diffusion_unet_lowdim_workspace import (
+        TrainDiffusionUnetLowdimWorkspace,
+    )
+
+    pretrain_policy = make_policy('pretrain')
+    pretrain_policy.compute_loss(batch())
+    pretrain_metrics = TrainDiffusionUnetLowdimWorkspace._policy_loss_metrics(
+        pretrain_policy, prefix='train')
+    assert 'train/recon_mse' in pretrain_metrics
+
+    posttrain_policy = make_policy('posttrain')
+    posttrain_policy.compute_loss(batch())
+    posttrain_metrics = TrainDiffusionUnetLowdimWorkspace._policy_loss_metrics(
+        posttrain_policy, prefix='val')
+    for key in ('ot_raw', 'ot_attraction', 'ot_repulsion', 'ot_total', 'ot_delta'):
+        assert 'val/' + key in posttrain_metrics

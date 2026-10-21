@@ -104,7 +104,8 @@ logging:
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${training.stage}_${task_name}
   tags: ["${name}", "${training.stage}", "${task_name}", "${exp_name}"]
   id: null
-  group: null
+  group: priming_pusht_lowdim
+  job_type: ${training.stage}
 
 checkpoint:
   topk:
