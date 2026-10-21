@@ -160,15 +160,21 @@ def main():
         raise FileNotFoundError(image)
     if image is None:
         image_pretrain=out/"image_stage1_pretrain"
-        if args.resume and (image_pretrain/"checkpoints").exists():
-            try:
-                image=best_image_ckpt(image_pretrain)
-            except FileNotFoundError:
-                image=None
+        complete=image_pretrain/"pretrain_complete.json"
+        if args.resume and complete.is_file():
+            previous=json.loads(complete.read_text())
+            image=pathlib.Path(previous["checkpoint"]).resolve()
+            if not image.is_file():
+                raise FileNotFoundError("completed Image teacher missing: "+str(image))
+        elif args.resume and image_pretrain.exists() and any(image_pretrain.iterdir()):
+            raise RuntimeError(
+                "Image pretraining is incomplete: "+str(image_pretrain)+
+                ". Refusing to treat a partial Stage-1 run as a completed "
+                "teacher. Finish/resume it manually or start a NEW --out dir.")
         if image is None:
             cmd=[sys.executable,"train.py",
                  "--config-name=train_priming_image_workspace",
-                 "training.stage=pretrain" if False else "training.device=cuda:0",
+                 "training.device=cuda:0",
                  "training.seed="+str(args.seed),
                  "training.resume=false",
                  "training.num_epochs="+str(2 if args.smoke else args.image_pretrain_epochs),
@@ -183,6 +189,9 @@ def main():
                  "hydra.run.dir="+str(image_pretrain)]
             invoke(cmd,env,image_pretrain/"terminal.log")
             image=best_image_ckpt(image_pretrain)
+            complete.write_text(json.dumps({
+                "checkpoint":str(image),"epochs":2 if args.smoke else args.image_pretrain_epochs,
+                "finished_at":time.time()},indent=2))
         record("image/stage1_teacher",{"path":str(image)})
     run_modality("image",image)
     print("ALL PHASES COMPLETE:",manifest,flush=True)
