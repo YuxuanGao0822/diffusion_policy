@@ -143,3 +143,39 @@ def test_priming_stage_metrics_available_for_workspace():
         posttrain_policy, prefix='val')
     for key in ('ot_raw', 'ot_attraction', 'ot_repulsion', 'ot_total', 'ot_delta'):
         assert 'val/' + key in posttrain_metrics
+
+def test_energy_objective_finite_gradients_and_stopgrad_reference():
+    """Paper's energy-distance ablation is a controlled alternative to OT."""
+    torch.manual_seed(17)
+    live = torch.randn(2, 4, 8, 2, requires_grad=True)
+    reference = torch.randn(2, 4, 8, 2, requires_grad=True)
+    real = torch.randn(2, 1, 8, 2)
+    criterion = ConditionalActionOTLoss(objective="energy")
+    loss, metrics = criterion(live, reference, real)
+    assert torch.isfinite(loss)
+    assert set(metrics) == {
+        "energy_raw", "energy_attraction", "energy_repulsion", "energy_total"
+    }
+    loss.backward()
+    assert live.grad is not None and torch.isfinite(live.grad).all()
+    assert live.grad.abs().sum() > 0
+    assert reference.grad is None
+
+
+def test_ot_objective_default_unchanged():
+    """The ablation must not alter existing OT experiments by default."""
+    torch.manual_seed(18)
+    live = torch.randn(2, 3, 8, 2)
+    reference = torch.randn(2, 3, 8, 2)
+    real = torch.randn(2, 1, 8, 2)
+    default_loss, default_metrics = ConditionalActionOTLoss()(live, reference, real)
+    explicit_loss, explicit_metrics = ConditionalActionOTLoss(
+        objective="ot")(live, reference, real)
+    assert torch.allclose(default_loss, explicit_loss, atol=0, rtol=0)
+    assert default_metrics.keys() == explicit_metrics.keys()
+
+
+def test_invalid_distribution_objective():
+    import pytest
+    with pytest.raises(ValueError, match="objective"):
+        ConditionalActionOTLoss(objective="not-an-objective")

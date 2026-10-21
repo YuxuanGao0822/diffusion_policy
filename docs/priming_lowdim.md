@@ -180,3 +180,64 @@ interval. The existing `test_mean_score` is available only on epochs where
 (or smaller rollout interval that divides the checkpoint interval).
 
 These metrics are diagnostic and do not imply successful PushT training.
+
+## Diagnosing near-unit post-training loss and testing Energy Distance
+
+Stage-2 OT near 1 is **not** by itself an implementation error. The detached
+pair-RMS scale uses generated-to-expert cost plus generated-to-independent-
+reference cost; when generated diversity is small relative to expert error,
+the attraction term approaches 1 and Sinkhorn self-interaction can be small.
+The PushT condition is a continuous observation, with one paired action
+sequence per dataset occurrence, so per-condition cross-OT uses a single
+expert target. This is a structural identifiability limit when transferring
+the conditional distribution objective from images/video to lowdim actions.
+
+Use a held-out checkpoint diversity audit before interpreting OT loss as
+mode collapse. On identical observation batches and identical Gaussian seeds,
+compare Stage-1 EMA against Stage-2 EMA, measuring
+generated_pair_vs_expert_sq_ratio, within_noise_coordinate_std,
+sample_to_expert_mse, and output_clipped_fraction_executed_steps.
+The trained checkpointer uses dill: load ONLY trusted checkpoint files.
+
+A **paper-motivated ablation** is enabled by:
+
+```bash
+policy.distribution_objective=energy
+```
+
+This selects the energy-distance surrogate from Priming Models Appendix B.2:
+mean Euclidean generated-to-expert distance **minus** mean Euclidean
+generated-to-independent-reference distance (reference is stop-gradient).
+The same detached pair-RMS scaling is retained. Training logs use
+`train/energy_attraction`, `train/energy_repulsion`, and
+`train/energy_total` (and `val/energy_*`) instead of `ot_*`.
+`policy.ot_epsilon` and `policy.ot_iterations` do not affect the energy
+objective. The original `distribution_objective=ot` is **unchanged**.
+
+Start from the SAME Stage-1 checkpoint and run a new independent output
+directory with the same seed, learning rate, batch size, K, and evaluation
+settings to isolate the choice of objective. Use PushT rollout score as the
+primary outcome; energy loss values and OT loss values are on different scales
+and are not directly comparable. This option is exploratory, **not** a
+validated improvement. Consider 3 independent seeds for a final comparison.
+
+### Checkpoint diversity audit on your server
+
+Before running another lengthy post-training experiment, inspect the SAME
+training and validation observations under Stage-1 and Stage-2 EMA weights:
+
+```bash
+python scripts/diagnose_priming_diversity.py \
+  --checkpoint "$STAGE1_CKPT" "$STAGE2_CKPT" \
+  --names stage1_e350 stage2_latest \
+  --conditions 24 --samples 64 --noise-batch 32 \
+  --device cuda:0 \
+  --output data/outputs/priming_pusht/diversity_audit.csv
+```
+
+Use actual absolute checkpoint paths for STAGE1_CKPT and STAGE2_CKPT.
+The audit produces per-condition rows for both train and val with noise
+sensitivity, generated pair distance, sample/expert error, and fraction of
+normalized actions outside the inference clamp [-1,1]. This is not a
+benchmark rollout and does not prove causal reasons for score changes.
+It uses matched observation indices and Gaussian noise across checkpoints.
