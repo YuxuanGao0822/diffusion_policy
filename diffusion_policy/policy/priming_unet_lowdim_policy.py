@@ -22,7 +22,9 @@ class PrimingUnetLowdimPolicy(BaseLowdimPolicy):
                  n_obs_steps: int, stage: str = "pretrain",
                  noise_level: float = 0.8, samples_per_condition: int = 4,
                  ot_epsilon: float = 0.05, ot_iterations: int = 30,
-                 delta_weight: float = 0.0, clip_sample: bool = True,
+                 delta_weight: float = 0.0,
+                 distribution_objective: str = "ot",
+                 clip_sample: bool = True,
                  oa_step_convention: bool = True):
         super().__init__()
         if stage not in ("pretrain", "posttrain"):
@@ -50,7 +52,7 @@ class PrimingUnetLowdimPolicy(BaseLowdimPolicy):
         self.oa_step_convention = bool(oa_step_convention)
         self.distribution_loss = ConditionalActionOTLoss(
             epsilon=ot_epsilon, sinkhorn_iterations=ot_iterations,
-            delta_weight=delta_weight)
+            delta_weight=delta_weight, objective=distribution_objective)
         self.last_loss_metrics = {}
 
     def set_normalizer(self, normalizer: LinearNormalizer):

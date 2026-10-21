@@ -58,10 +58,14 @@ class ConditionalActionOTLoss(nn.Module):
     """
 
     def __init__(self, epsilon=0.05, sinkhorn_iterations=30,
-                 delta_weight=0.0, min_feature_scale=1e-3):
+                 delta_weight=0.0, min_feature_scale=1e-3,
+                 objective="ot"):
         super().__init__()
         if not (0.0 <= delta_weight):
             raise ValueError("delta_weight must be nonnegative")
+        if objective not in ("ot", "energy"):
+            raise ValueError("objective must be 'ot' or 'energy'")
+        self.objective = objective
         self.epsilon = float(epsilon)
         self.sinkhorn_iterations = int(sinkhorn_iterations)
         self.delta_weight = float(delta_weight)
@@ -86,12 +90,18 @@ class ConditionalActionOTLoss(nn.Module):
         cross_cost = _half_squared_distances(live_scaled, real_scaled)
         self_cost = _half_squared_distances(live_scaled, reference_scaled)
 
-        # With exactly one real action per condition, cross OT is the
-        # uniform mean regardless of entropy regularization.
-        attraction = cross_cost.mean()
-        plan = uniform_sinkhorn_plan(self_cost, self.epsilon,
-                                     self.sinkhorn_iterations)
-        repulsion = (plan * self_cost).sum(dim=(-2, -1)).mean()
+        if self.objective == "ot":
+            # With one real action per condition, cross OT is a uniform mean.
+            attraction = cross_cost.mean()
+            plan = uniform_sinkhorn_plan(self_cost, self.epsilon,
+                                         self.sinkhorn_iterations)
+            repulsion = (plan * self_cost).sum(dim=(-2, -1)).mean()
+        else:
+            # Energy distance surrogate from Priming Models Appendix B.2:
+            # D(G,R)=E[||g-r||_2], D(G,sg[Gref])=E[||g-sg[gref]||_2].
+            # Unlike quadratic OT, no entropy-regularized nearest pairing.
+            attraction = (2.0 * cross_cost + 1.e-12).sqrt().mean()
+            repulsion = (2.0 * self_cost + 1.e-12).sqrt().mean()
         return attraction - repulsion, attraction.detach(), repulsion.detach()
 
     def forward(self, live: torch.Tensor, reference: torch.Tensor,
@@ -109,10 +119,11 @@ class ConditionalActionOTLoss(nn.Module):
         raw_loss, attraction, repulsion = self._branch_loss(
             raw_live, raw_ref, raw_real)
         total = raw_loss
+        metric_prefix = "ot" if self.objective == "ot" else "energy"
         details = {
-            "ot_raw": raw_loss.detach(),
-            "ot_attraction": attraction,
-            "ot_repulsion": repulsion,
+            metric_prefix + "_raw": raw_loss.detach(),
+            metric_prefix + "_attraction": attraction,
+            metric_prefix + "_repulsion": repulsion,
         }
         if self.delta_weight:
             if live.shape[2] < 2:
@@ -121,6 +132,6 @@ class ConditionalActionOTLoss(nn.Module):
             delta_loss, _, _ = self._branch_loss(
                 diff(live), diff(reference), diff(real))
             total = total + self.delta_weight * delta_loss
-            details["ot_delta"] = delta_loss.detach()
-        details["ot_total"] = total.detach()
+            details[metric_prefix + "_delta"] = delta_loss.detach()
+        details[metric_prefix + "_total"] = total.detach()
         return total, details
