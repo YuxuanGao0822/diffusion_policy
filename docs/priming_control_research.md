@@ -81,8 +81,11 @@ On disconnect, use tmux:
 Resume by running same command with --resume. Finished stages are skipped.
 Incomplete online stages load their latest.pt checkpoint (latest evaluation
 boundary), not the previous phase. Image Stage-1 does not support mid-epoch
-resume: completed scored checkpoints can be reused, otherwise its stage
-may need retraining.
+resume in this pipeline. A `pretrain_complete.json` marker is created only
+after the full requested Stage-1 pretraining command completes. Partially
+written checkpoint directories are deliberately **not** accepted as
+completed teachers; manually finish that pretraining or use a new --out
+directory.
 
 If you have already separately trained an Image Stage-1 EMA checkpoint,
 add \`--image-checkpoint /path/to/your/image/epoch=...ckpt\` (quote path
@@ -96,6 +99,8 @@ For intermediate Lowdim-only verification: append \`--skip-image\`.
 \`\`\`text
 control_research_full/
   pipeline_manifest.json
+  summary.csv
+  summary.md
   lowdim/0_baseline/heldout.json
   lowdim/1_residual/{best.pt,latest.pt,training.jsonl,heldout.json,success.json}
   lowdim/2_anchored_q/...
@@ -134,3 +139,9 @@ control_research_full/
 - \`diffusion_policy/policy/priming_unet_image_policy.py\` and
   \`diffusion_policy/config/train_priming_image_workspace.yaml\`:
   independent one-NFE Image Stage-1 pretraining.
+
+
+Resuming online RL restarts from a seeded episode boundary at each
+checkpoint/evaluation interval; it does not pickle the physics-engine state.
+The epoch-350 teacher, selection seed interval, evaluation trajectory seeds,
+and all hyperparameters should be reported in any paper comparison.
