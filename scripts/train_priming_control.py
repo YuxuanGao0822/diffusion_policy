@@ -332,6 +332,15 @@ def main():
                                  args.max_env_steps,args.gamma)
                 improved=current["mean_score"]>best_score
                 best_score=max(best_score,current["mean_score"])
+                # Save only at an episode boundary: the raw physics engine
+                # cannot be restored from an ordinary model checkpoint.
+                # Abandon any partial environment rollout at an eval
+                # boundary, so resuming from 'episodes' reconstructs the
+                # same seeded initial observation.
+                if not done:
+                    episodes+=1
+                    obs=env.reset(1000+args.seed*100000+episodes)
+                done=False
                 row={"step":seen,"episodes":episodes,"selection_mean":current["mean_score"],
                      "best_selection_mean":best_score,"replay_size":len(replay),**metrics}
                 log.write(json.dumps(row)+"\n")
