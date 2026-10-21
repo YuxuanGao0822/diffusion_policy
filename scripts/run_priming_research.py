@@ -343,8 +343,10 @@ def train_dynamics(dyn,opt,replay,args,device):
     # Fixed held-out subset; robustly refuse unconstrained task OT if model
     # does not improve over a constant predictor on this validation subset.
     n=replay.size
-    if n<max(args.batch_size*2,100):
-        raise RuntimeError("Not enough transitions to train task dynamics")
+    required=max(args.batch_size*2, 4 if args.smoke else 100)
+    if n<required:
+        raise RuntimeError("Not enough transitions to train task dynamics: "+
+                           f"{n} < {required}. Collect more episodes.")
     rng=np.random.RandomState(args.seed+303)
     ids=rng.permutation(n)
     cutoff=max(1,int(0.8*n))
