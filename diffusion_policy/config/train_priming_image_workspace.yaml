@@ -1,17 +1,12 @@
 defaults:
   - _self_
   - task: pusht_image
-
 name: train_priming_image
-_target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
-task_name: ${task.name}
+_target_: diffusion_policy.workspace.train_priming_image_workspace.TrainPrimingImageWorkspace
 shape_meta: ${task.shape_meta}
-exp_name: one_step_priming_image
 horizon: 16
 n_obs_steps: 2
 n_action_steps: 8
-n_latency_steps: 0
-dataset_obs_steps: ${n_obs_steps}
 past_action_visible: false
 policy:
   _target_: diffusion_policy.policy.priming_unet_image_policy.PrimingUnetImagePolicy
@@ -24,22 +19,28 @@ policy:
       name: resnet18
       weights: null
     resize_shape: null
-    crop_shape: [76, 76]
-    random_crop: true
+    crop_shape: null
+    random_crop: false
     use_group_norm: true
     share_rgb_model: false
     imagenet_norm: true
   horizon: ${horizon}
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
+  stage: pretrain
   noise_level: 0.8
-  diffusion_step_embed_dim: 128
-  down_dims: [256, 512, 1024]
+  samples_per_condition: 4
+  distribution_objective: ot
+  distribution_window: full
+  ot_epsilon: 0.05
+  ot_iterations: 30
+  delta_weight: 0.0
+  clip_sample: true
+  diffusion_step_embed_dim: 256
+  down_dims: [256,512,1024]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: true
-  clip_sample: true
-
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
   update_after_step: 0
@@ -47,7 +48,6 @@ ema:
   power: 0.75
   min_value: 0.0
   max_value: 0.9999
-
 dataloader:
   batch_size: 64
   num_workers: 8
@@ -55,45 +55,43 @@ dataloader:
   pin_memory: true
   persistent_workers: true
 val_dataloader:
-  batch_size: 32
+  batch_size: 64
   num_workers: 4
   shuffle: false
   pin_memory: true
-  persistent_workers: false
+  persistent_workers: true
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 1.0e-4
-  betas: [0.95, 0.999]
-  eps: 1.0e-8
-  weight_decay: 1.0e-6
-
+  lr: 1e-4
+  betas: [0.95,0.999]
+  eps: 1e-8
+  weight_decay: 1e-6
 training:
-  device: cuda:0
+  device: "cuda:0"
   seed: 42
   debug: false
   resume: false
   lr_scheduler: cosine
-  lr_warmup_steps: 300
-  num_epochs: 350
+  lr_warmup_steps: 500
+  num_epochs: 400
   gradient_accumulate_every: 1
   use_ema: true
   freeze_encoder: false
   rollout_every: 25
   checkpoint_every: 25
-  val_every: 25
+  val_every: 10
   sample_every: 25
   max_train_steps: null
   max_val_steps: null
   tqdm_interval_sec: 1.0
-
 logging:
   project: priming_pusht_image
   resume: false
   mode: disabled
-  name: ${now:%Y.%m.%d-%H.%M.%S}_priming_image
-  tags: [priming, pusht_image]
+  name: priming_pusht_image
+  tags: [priming,image]
   id: null
-  group: priming_pusht_image
+  group: priming_image
   job_type: pretrain
 checkpoint:
   topk:
@@ -103,14 +101,6 @@ checkpoint:
     format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt'
   save_last_ckpt: true
   save_last_snapshot: false
-multi_run:
-  run_dir: data/outputs/priming_research_image
-  wandb_name_base: priming_image
 hydra:
-  job:
-    override_dirname: ${name}
   run:
-    dir: data/outputs/priming_research_image
-  sweep:
-    dir: data/outputs/priming_research_image
-    subdir: ${hydra.job.num}
+    dir: data/outputs/priming_pusht/image_pretrain
