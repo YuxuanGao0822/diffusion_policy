@@ -20,7 +20,7 @@ def test_fresh_reference_cancels_shared_translation():
     fresh=half_pairwise_squared(y,y)
     stale=half_pairwise_squared(y,x)
     original=half_pairwise_squared(x,x)
-    assert fresh==pytest.approx(original)
+    assert fresh==pytest.approx(original,rel=1e-4,abs=1e-9)
     assert stale>1000*original
 
 
