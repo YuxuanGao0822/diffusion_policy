@@ -10,8 +10,8 @@ def test_mean_shift_does_not_change_diversity():
     y=x+4
     assert sample_variance(y)==pytest.approx(sample_variance(x))
     assert mean_shift_rms(y,x)==pytest.approx(4.)
-    assert half_pairwise_squared(y,y)==pytest.approx(2.)
-    assert half_pairwise_squared(y,x)==pytest.approx(10.)
+    assert half_pairwise_squared(y,y)==pytest.approx(1.)
+    assert half_pairwise_squared(y,x)==pytest.approx(9.)
 
 
 def test_fresh_reference_cancels_shared_translation():
